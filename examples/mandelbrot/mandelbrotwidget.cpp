@@ -38,11 +38,11 @@
 
 #include "mandelbrotwidget.h"
 
-const double DefaultCenterX = -0.637011f;
-const double DefaultCenterY = -0.0395159f;
-const double DefaultScale = 0.00403897f;
+const double DefaultCenterX = -0.637011;
+const double DefaultCenterY = -0.0395159;
+const double DefaultScale = 0.00403897;
 
-const double ZoomInFactor = 0.8f;
+const double ZoomInFactor = 0.8;
 const double ZoomOutFactor = 1 / ZoomInFactor;
 const int ScrollStep = 20;
 
@@ -75,6 +75,11 @@ MandelbrotWidget::~MandelbrotWidget()
 void MandelbrotWidget::resetThinker(double centerX, double centerY,
                 double scaleFactor, QSize resultSize)
 {
+    Q_UNUSED(centerX)
+    Q_UNUSED(centerY)
+    Q_UNUSED(scaleFactor)
+    Q_UNUSED(resultSize)
+
     watcher.cancel();
 
     watcher.setPresent(ThinkerQt::run<RenderThinker>(centerX, centerY,
@@ -105,7 +110,7 @@ void MandelbrotWidget::paintEvent(QPaintEvent * /* event */)
         painter.save();
         painter.translate(newX, newY);
         painter.scale(scaleFactor, scaleFactor);
-        QRectF exposed = painter.matrix().inverted().mapRect(rect()).adjusted(-1, -1, 1, 1);
+        QRectF exposed = painter.transform().inverted().mapRect(rect()).adjusted(-1, -1, 1, 1);
         painter.drawPixmap(exposed, pixmap, exposed);
         painter.restore();
     }
@@ -113,7 +118,7 @@ void MandelbrotWidget::paintEvent(QPaintEvent * /* event */)
     QString text = tr("Use mouse wheel or the '+' and '-' keys to zoom. "
                       "Press and hold left mouse button to scroll.");
     QFontMetrics metrics = painter.fontMetrics();
-    int textWidth = metrics.width(text);
+    int textWidth = metrics.horizontalAdvance(text);
 
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(0, 0, 0, 127));
@@ -158,7 +163,7 @@ void MandelbrotWidget::keyPressEvent(QKeyEvent *event)
 void MandelbrotWidget::wheelEvent(QWheelEvent *event)
 {
     int numDegrees = event->delta() / 8;
-    double numSteps = numDegrees / 15.0f;
+    double numSteps = numDegrees / 15.0;
     zoom(pow(ZoomInFactor, numSteps));
 }
 

@@ -22,164 +22,7 @@
 #ifndef THINKERQT_THINKER_H
 #define THINKERQT_THINKER_H
 
-#include <QObject>
-#include <QSet>
-#include <QReadWriteLock>
-
-#include "defs.h"
-#include "snapshottable.h"
-#include "signalthrottler.h"
-#include "thinkerpresent.h"
-#include "thinkerpresentwatcher.h"
-
-class ThinkerManager;
-class ThinkerRunner;
-class ThinkerPresentWatcherBase;
-
-//
-// ThinkerBase
-//
-// A "Thinker" is a task which runs on its own thread and is supposed to make
-// some kind of calculation which other threads are interested in.  The way
-// that progress is communicated back is through read-only "snapshots" of
-// the object's state.
-//
-// The reason there is a base "ThinkerBase" which is separate from the
-// "Thinker" template is due to limitations of Qt's moc in allowing you to
-// declare templated QObjects.  See this article for more information:
-//
-//  http://doc.trolltech.com/qq/qq15-academic.html
-//
-
-class ThinkerBase : public QObject, virtual public SnapshottableBase {
-
-    Q_OBJECT
-
-    friend class ThinkerManager;
-    friend class ThinkerPresentWatcherBase;
-    friend class ThinkerPresentBase;
-    friend class ThinkerRunner;
-
-
-private:
-    enum class State {
-        ThinkerOwnedByRunner = 0,
-        ThinkerFinished = 1,
-        ThinkerCanceled = 2
-    };
-
-
-public:
-#if THINKERQT_EXPLICIT_MANAGER
-    ThinkerBase (ThinkerManager & mgr);
-#else
-    ThinkerBase ();
-#endif
-
-    virtual ~ThinkerBase ();
-
-
-public:
-    ThinkerManager & getManager() const;
-
-
-public:
-    bool wasPauseRequested (unsigned long time = 0) const;
-
-// If exceptions are enabled, you can use this and it will throw an exception
-// to the internal thread loop boilerplate on a pause request; only appropriate
-// for non-continuable thinkers to use...
-#ifndef Q_NO_EXCEPTIONS
-    void pollForStopException (unsigned long time = 0) const;
-#endif
-
-
-public:
-    virtual void afterThreadAttach ();
-
-    virtual void beforeThreadDetach ();
-
-
-public:
-    bool hopefullyCurrentThreadIsThink (codeplace const & cp) const {
-        // we currently allow locking a thinker for writing
-        // on the manager thread between the time the
-        // Snapshot base class constructor has run
-        // and when it is attached to a ThinkerPresent
-        return hopefully(thread() == QThread::currentThread(), cp);
-    }
-
-
-protected:
-    // These overrides provide added checking and also signal
-    // "progress" when the unlock runs.
-
-    virtual void lockForWrite (codeplace const & cp) override;
-
-    virtual void unlock (codeplace const & cp) override;
-
-#ifndef THINKERQT_REQUIRE_CODEPLACE
-    // This will cause the any asserts to indicate a failure in thinker.h
-    // instead of at the offending line in the caller... not as good... see
-    // hoist documentation http://hostilefork.com/hoist/
-    void lockForWrite () {
-        return lockForWrite(HERE);
-    }
-
-    void unlock () {
-        return unlock(HERE);
-    }
-#endif
-
-
-signals:
-    // The done signal is used by the ThinkerPresentWatcher.  Once it was
-    // the responsibility of a thinker's start/resume methods to emit this
-    // signal, but that was switched to returning true or false.  Given
-    // that change there may be better ways of notifying the watcher of
-    // completion...but to keep things working as they were the signal
-    // has been left here and is emitted by wrapping functions.
-
-    void done ();
-
-
-private:
-    bool startMaybeEmitDone() {
-        if (start()) {
-            emit done();
-            return true;
-        }
-        return false;
-    }
-
-    bool resumeMaybeEmitDone() {
-        if (resume()) {
-            emit done();
-            return true;
-        }
-        return false;
-    }
-
-protected:
-    virtual bool start () = 0;
-
-    virtual bool resume () {
-        // Making a restartable thinker typically involves extra work to
-        // make it into a coroutine.  You don't have to do that work if
-        // you don't intend on pausing and restarting thinkers.  In that
-        // case, wasPauseRequested really just means wasStopRequested...
-
-        hopefullyNotReached("Thinker not designed to be resumable.", HERE);
-        return false;
-    }
-
-
-private:
-    State _state;
-    ThinkerManager & _mgr;
-    QReadWriteLock _watchersLock;
-    QSet<ThinkerPresentWatcherBase *> _watchers;
-};
+#include "thinkerbase.h"
 
 
 // If you aren't trying to create a class from which you will be deriving
@@ -204,24 +47,24 @@ private:
 template <class T>
 class Thinker : public ThinkerBase, private Snapshottable<T>
 {
-public:
+  public:
     typedef T DataType;
     typedef typename Snapshottable<DataType>::Snapshot Snapshot;
 
-public:
-    class Present : public ThinkerPresentBase
-    {
-    public:
+  public:
+    class Present : public ThinkerPresentBase {
+      public:
         Present () :
             ThinkerPresentBase ()
-        {
-        }
+          { }
 
-    protected:
+      protected:
         void verifyPresentType(codeplace const & cp) {
+            //
             // If we are generating a templated Thinker<T>::Present from a
             // base Present, ensure that the thinker held by that Present
             // is actually convertible to Thinker<T>!
+            //
             hopefully(
                 dynamic_cast<Thinker *>(&ThinkerPresentBase::getThinkerBase())
                 != nullptr,
@@ -229,38 +72,33 @@ public:
             );
         }
 
-    public:
+      public:
         Present (ThinkerPresentBase & base) :
             ThinkerPresentBase (base)
-        {
-            verifyPresentType(HERE);
-        }
+          { verifyPresentType(HERE); }
 
-    protected:
+      protected:
         Present (shared_ptr<ThinkerBase> holder) :
             ThinkerPresentBase (holder)
-        {
-            verifyPresentType(HERE);
-        }
+          { verifyPresentType(HERE); }
 
-    public:
+      public:
         Present (Present const & other) :
             ThinkerPresentBase (other)
-        {
-        }
+          { }
 
         virtual ~Present () override
-        {
-        }
+          { }
 
         friend class ThinkerManager;
 
-    public:
-        typename Thinker::Snapshot createSnapshot () const
-        {
+      public:
+        typename Thinker::Snapshot createSnapshot() const {
+            //
             // This restriction will have to be relaxed, but it may still be
             // helpful to offer some kind of virtual method hook to do thread
             // checking.
+            //
             hopefullyCurrentThreadIsDifferent(HERE);
 
             SnapshotBase * allocatedSnapshot = createSnapshotBase();
@@ -273,145 +111,117 @@ public:
         }
     };
 
-
-public:
-    class PresentWatcher : public ThinkerPresentWatcherBase
-    {
-    public:
+  public:
+    class PresentWatcher : public ThinkerPresentWatcherBase {
+      public:
         PresentWatcher (Present present) :
             ThinkerPresentWatcherBase (present)
-        {
-        }
+          { }
 
         PresentWatcher () :
             ThinkerPresentWatcherBase ()
-        {
-        }
+          { }
 
         ~PresentWatcher ()
-        {
-        }
+          { }
 
-    public:
-        typename Thinker::Snapshot createSnapshot () const
-        {
+      public:
+        const typename Thinker::Snapshot createSnapshot() const {
             hopefullyCurrentThreadIsDifferent(HERE);
-            SnapshotBase * allocatedSnapshot = createSnapshotBase();
+            const SnapshotBase * allocatedSnapshot = createSnapshotBase();
 
-            Snapshot * ptr = dynamic_cast<Snapshot *>(allocatedSnapshot);
+            const Snapshot * ptr
+                = dynamic_cast<const Snapshot *>(allocatedSnapshot);
             hopefully(ptr != nullptr, HERE);
 
-            Snapshot result = *ptr;
+            const Snapshot result = *ptr;
             delete allocatedSnapshot;
             return result;
         }
 
-        void setPresent (Present present)
-        {
-            setPresentBase(present);
-        }
+        void setPresent(Present present)
+          { setPresentBase(present); }
 
-        Present present ()
-        {
-            return Present (presentBase());
-        }
+        Present present()
+          { return Present (presentBase()); }
     };
 
-
-public:
-#if THINKERQT_EXPLICIT_MANAGER
-
+  public:
+  #ifdef THINKERQT_EXPLICIT_MANAGER
     Thinker (ThinkerManager & mgr) :
         ThinkerBase (mgr),
         Snapshottable<DataType> ()
-    {
-    }
+      { }
 
     template <class... Args>
     Thinker (ThinkerManager & mgr, Args &&... args) :
         ThinkerBase (mgr),
         Snapshottable<DataType> (std::forward<Args>(args)...)
-    {
-    }
-
-#else
-
+      { }
+  #else
     Thinker () :
         ThinkerBase (),
         Snapshottable<DataType> ()
-    {
-    }
+      { }
 
     template <class... Args>
     Thinker (Args &&... args) :
         ThinkerBase (),
         Snapshottable<DataType> (std::forward<Args>(args)...)
-    {
-    }
-
-#endif
+      { }
+  #endif
 
     virtual ~Thinker () override
-    {
-    }
+      { }
 
 
-private:
+  private:
+    //
     // You call makeSnapshot from the ThinkerPresent and not from the
     // thinker itself.
-
+    //
     friend class Present;
+
     Snapshot makeSnapshot ()
-    {
-        return Snapshottable<DataType>::makeSnapshot();
-    }
+      { return Snapshottable<DataType>::makeSnapshot(); }
 
-
-public:
     // These overrides are here because we are inheriting privately
     // from Snapshottable, but want readable() and writable() to
     // be public.
+    //
+  public:
+    const T & readable() const
+      { return Snapshottable<DataType>::readable(); }
 
-    const T & readable () const
-    {
-        return Snapshottable<DataType>::readable();
-    }
+    T & writable(codeplace const & cp)
+      { return Snapshottable<DataType>::writable(cp); }
 
-    T & writable (codeplace const & cp)
-    {
-        return Snapshottable<DataType>::writable(cp);
-    }
-
-#if not THINKERQT_REQUIRE_CODEPLACE
+  #ifndef THINKERQT_REQUIRE_CODEPLACE
     T & writable()
-    {
-        return writable(HERE);
-    }
-#endif
+      { return writable(HERE); }
+  #endif
 };
 
 
+#ifndef THINKERQT_EXPLICIT_MANAGER
+    //
+    // If for convenience you just want one on-demand manager, this provides an
+    // analogue to QtConcurrent::run just from including thinker.h - otherwise
+    // somewhere in your program you will have to include thinkermanager.h
+    // and instantiate it yourself
 
-//
-// If for convenience you just want one on-demand manager, this provides an
-// analogue to QtConcurrent::run just from including thinker.h - otherwise
-// somewhere in your program you will have to include thinkermanager.h
-// and instantiate it yourself
-//
+    #include "thinkermanager.h"
 
-#if not THINKERQT_EXPLICIT_MANAGER
-
-#include "thinkermanager.h"
-
-namespace ThinkerQt {
-
-    template <class ThinkerType, class... Args>
-    typename ThinkerType::Present run (Args&&... args) {
-        return ThinkerManager::getGlobalManager().run(unique_ptr<ThinkerType>(
-            new ThinkerType (std::forward<Args>(args)...))
-        );
+    namespace ThinkerQt {
+        template <class ThinkerType, class... Args>
+        typename ThinkerType::Present run(Args&&... args) {
+            return ThinkerManager::getGlobalManager().run(
+                unique_ptr<ThinkerType>(
+                    new ThinkerType (std::forward<Args>(args)...)
+                )
+            );
+        }
     }
-}
 #endif
 
 #endif
