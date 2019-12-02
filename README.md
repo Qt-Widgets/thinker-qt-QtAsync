@@ -1,0 +1,5 @@
+See http://hostilefork.com/thinker-qt/ for information on this project
+
+Active development on this project is resuming as of June 2012.
+
+![screenshot](./screenshot.png)
